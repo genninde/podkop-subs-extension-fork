@@ -3,7 +3,7 @@
 
 set -e
 
-REPO_URL="https://raw.githubusercontent.com/artemscine/luci-podkop-subscribe/main"
+REPO_URL="https://raw.githubusercontent.com/genninde/podkop-subs-extension-fork/main"
 BASE_URL="${REPO_URL}/files"
 OPENWRT_RELEASE=""
 PKG_MANAGER=""

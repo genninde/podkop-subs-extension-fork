@@ -10,6 +10,7 @@
 
 ```bash
 sh <(wget -O - https://raw.githubusercontent.com/artemscine/luci-podkop-subscribe/main/install.sh)
+sh <(wget -O - https://raw.githubusercontent.com/genninde/podkop-subs-extension-fork/main/install.sh)
 ```
 
 ## Проверенные версии
@@ -21,6 +22,7 @@ sh <(wget -O - https://raw.githubusercontent.com/artemscine/luci-podkop-subscrib
 
 ```bash
 sh <(wget -O - https://raw.githubusercontent.com/artemscine/luci-podkop-subscribe/main/uninstall.sh)
+sh <(wget -O - https://raw.githubusercontent.com/genninde/podkop-subs-extension-fork/main/uninstall.sh)
 ```
 
 ## Возможности

@@ -960,7 +960,7 @@ function enhanceSectionWithSubscribe(section) {
     _("Интервал обновления"),
     _("Автоматически получать и применять конфигурацию из Subscribe URL по расписанию")
   );
-  o.depends("proxy_config_type", "url");
+  o.depends({ proxy_config_type: "url", connection_type: "proxy" });
   o.value("0", _("Отключено"));
   o.value("1",  _("Каждый час"));
   o.value("6",  _("Каждые 6 часов"));
@@ -978,7 +978,7 @@ function enhanceSectionWithSubscribe(section) {
     _("Индекс конфигурации"),
     _("Порядковый номер конфигурации в подписке (начиная с 0), применяемой при автообновлении. Обновляется автоматически при нажатии на конфигурацию.")
   );
-  o.depends("proxy_config_type", "url");
+  o.depends({ proxy_config_type: "url", connection_type: "proxy" });
   o.placeholder = "0";
   o.default = "0";
   o.rmempty = true;

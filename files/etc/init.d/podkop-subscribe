@@ -1,0 +1,105 @@
+#!/bin/sh /etc/rc.common
+# Init script for podkop-subscribe auto-update scheduler
+#
+# Manages cron entries that periodically run subscribe-auto-update
+# for each podkop section that has subscribe_interval > 0.
+#
+# Procd's service_triggers() ensures this script is reloaded whenever
+# /etc/config/podkop changes (i.e. when the user saves LuCI settings).
+
+START=99
+STOP=10
+USE_PROCD=1
+
+. /lib/functions.sh
+
+NAME="podkop-subscribe"
+CRON_FILE="/etc/crontabs/root"
+UPDATE_SCRIPT="/usr/share/podkop/subscribe-auto-update"
+
+# ---------------------------------------------------------------------------
+# get_cron_expr <interval_hours>  →  prints cron expression or empty string
+# ---------------------------------------------------------------------------
+get_cron_expr() {
+    case "$1" in
+        1)  printf '0 * * * *'     ;;
+        6)  printf '0 */6 * * *'   ;;
+        12) printf '0 */12 * * *'  ;;
+        24) printf '0 0 * * *'     ;;
+        48) printf '0 0 */2 * *'   ;;
+        72) printf '0 0 */3 * *'   ;;
+        *)  printf ''               ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# process_section <section_id>
+# Called by config_foreach; adds/removes a cron entry for the section.
+# ---------------------------------------------------------------------------
+process_section() {
+    local section_id="$1"
+    local subscribe_url subscribe_interval proxy_config_type
+
+    config_get subscribe_url      "$section_id" subscribe_url      ""
+    config_get subscribe_interval "$section_id" subscribe_interval "0"
+    config_get proxy_config_type  "$section_id" proxy_config_type  ""
+
+    # Always remove any existing entry for this section first
+    [ -f "$CRON_FILE" ] && \
+        sed -i "/# podkop-subscribe-${section_id}\$/d" "$CRON_FILE" 2>/dev/null
+
+    # Add entry only when auto-update is enabled for url mode
+    [ -z "$subscribe_url" ]           && return 0
+    [ "$subscribe_interval" = "0" ]   && return 0
+    [ "$proxy_config_type" != "url" ] && return 0
+
+    local cron_expr
+    cron_expr=$(get_cron_expr "$subscribe_interval")
+    [ -z "$cron_expr" ] && return 0
+
+    touch "$CRON_FILE"
+    printf '%s %s %s # podkop-subscribe-%s\n' \
+        "$cron_expr" "$UPDATE_SCRIPT" "$section_id" "$section_id" \
+        >> "$CRON_FILE"
+
+    logger -t podkop-subscribe \
+        "Scheduled auto-update for section '$section_id' (every ${subscribe_interval}h)"
+}
+
+# ---------------------------------------------------------------------------
+# reload_cron — signal crond to re-read its crontab
+# ---------------------------------------------------------------------------
+reload_cron() {
+    /etc/init.d/cron reload 2>/dev/null || \
+        kill -HUP "$(pidof crond)" 2>/dev/null || \
+        true
+}
+
+# ---------------------------------------------------------------------------
+# Procd service callbacks
+# ---------------------------------------------------------------------------
+start_service() {
+    config_load podkop
+    config_foreach process_section section
+    reload_cron
+}
+
+stop_service() {
+    # Remove all entries managed by this plugin
+    if [ -f "$CRON_FILE" ]; then
+        sed -i '/# podkop-subscribe-/d' "$CRON_FILE" 2>/dev/null
+        reload_cron
+    fi
+}
+
+reload_service() {
+    stop_service
+    start_service
+}
+
+# ---------------------------------------------------------------------------
+# Trigger a reload whenever /etc/config/podkop is committed
+# ---------------------------------------------------------------------------
+service_triggers() {
+    procd_add_reload_trigger "podkop"
+}

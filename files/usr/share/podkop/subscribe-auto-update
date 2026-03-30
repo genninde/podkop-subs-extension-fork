@@ -1,0 +1,125 @@
+#!/bin/sh
+# Podkop Subscribe Auto-Update Script
+#
+# Fetches the subscription URL stored in UCI, picks the config at the
+# configured index (subscribe_selected_index) and updates proxy_string
+# in /etc/config/podkop, then reloads the podkop service.
+#
+# Usage:
+#   subscribe-auto-update [SECTION_ID]
+#
+# Without SECTION_ID, all podkop sections are processed.
+
+. /lib/functions.sh
+
+# ---------------------------------------------------------------------------
+# update_section <section_id>
+# ---------------------------------------------------------------------------
+update_section() {
+    local section_id="$1"
+    local subscribe_url subscribe_interval proxy_config_type selected_index
+
+    config_get subscribe_url      "$section_id" subscribe_url            ""
+    config_get subscribe_interval "$section_id" subscribe_interval       "0"
+    config_get proxy_config_type  "$section_id" proxy_config_type        ""
+    config_get selected_index     "$section_id" subscribe_selected_index "0"
+
+    # Skip if not configured for auto-update
+    [ -z "$subscribe_url" ]           && return 0
+    [ "$subscribe_interval" = "0" ]   && return 0
+    [ "$proxy_config_type" != "url" ] && return 0
+
+    selected_index="${selected_index:-0}"
+
+    logger -t podkop-subscribe "Updating section '$section_id' (index=$selected_index) from: $subscribe_url"
+
+    local tmpfile decoded_file
+    tmpfile="/tmp/podkop_sub_$$_${section_id}"
+    decoded_file="/tmp/podkop_sub_dec_$$_${section_id}"
+
+    # --- Fetch subscription ---
+    if ! wget -q -O "$tmpfile" --timeout=30 --user-agent="v2rayNG" "$subscribe_url" 2>/dev/null; then
+        logger -t podkop-subscribe "ERROR: Failed to fetch URL for section '$section_id'"
+        rm -f "$tmpfile" "$decoded_file"
+        return 1
+    fi
+
+    if [ ! -s "$tmpfile" ]; then
+        logger -t podkop-subscribe "ERROR: Empty response for section '$section_id'"
+        rm -f "$tmpfile" "$decoded_file"
+        return 1
+    fi
+
+    # --- Decode: try base64 first, fall back to plain text ---
+    if base64 -d "$tmpfile" > "$decoded_file" 2>/dev/null && [ -s "$decoded_file" ]; then
+        : # decoded successfully
+    else
+        cp "$tmpfile" "$decoded_file"
+    fi
+
+    rm -f "$tmpfile"
+
+    # --- Parse configs and pick by index ---
+    local current_index=0
+    local selected_url=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        # Trim whitespace and carriage returns
+        line=$(printf '%s' "$line" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        [ -z "$line" ] && continue
+
+        case "$line" in
+            vless://*|ss://*|trojan://*|hy2://*|hysteria2://*)
+                if [ "$current_index" = "$selected_index" ]; then
+                    selected_url="$line"
+                    break
+                fi
+                current_index=$((current_index + 1))
+                ;;
+        esac
+    done < "$decoded_file"
+
+    rm -f "$decoded_file"
+
+    if [ -z "$selected_url" ]; then
+        logger -t podkop-subscribe \
+            "ERROR: No config at index $selected_index for section '$section_id' (found $current_index config(s))"
+        return 1
+    fi
+
+    # --- Compare with current value ---
+    local current_url
+    current_url=$(uci get "podkop.${section_id}.proxy_string" 2>/dev/null)
+
+    if [ "$current_url" = "$selected_url" ]; then
+        logger -t podkop-subscribe "No change needed for section '$section_id'"
+        return 0
+    fi
+
+    # --- Update UCI and reload service ---
+    uci set "podkop.${section_id}.proxy_string=$selected_url"
+    uci commit podkop
+
+    if /etc/init.d/podkop reload 2>/dev/null; then
+        logger -t podkop-subscribe "Updated and reloaded podkop for section '$section_id'"
+    elif /etc/init.d/podkop restart 2>/dev/null; then
+        logger -t podkop-subscribe "Updated and restarted podkop for section '$section_id'"
+    else
+        logger -t podkop-subscribe \
+            "WARNING: Updated proxy_string for section '$section_id' but could not reload podkop"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Main: iterate over sections (optionally filtered by TARGET_SECTION)
+# ---------------------------------------------------------------------------
+TARGET_SECTION="$1"
+
+run_section() {
+    local section_id="$1"
+    if [ -z "$TARGET_SECTION" ] || [ "$section_id" = "$TARGET_SECTION" ]; then
+        update_section "$section_id"
+    fi
+}
+
+config_load podkop
+config_foreach run_section section

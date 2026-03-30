@@ -1,0 +1,116 @@
+#!/bin/sh
+# Podkop Subscribe HTTP endpoint
+
+. /usr/share/libubox/jshn.sh
+
+# Set content type
+echo "Content-Type: application/json"
+echo ""
+
+# Read POST data
+read -r url
+
+if [ -z "$url" ]; then
+    json_init
+    json_add_string "error" "URL is required"
+    json_dump
+    exit 1
+fi
+
+# Fetch and decode subscribe
+tmpfile="/tmp/podkop_subscribe_$$"
+decoded_file="/tmp/podkop_subscribe_decoded_$$"
+
+# Cleanup function
+cleanup() {
+    rm -f "$tmpfile" "$decoded_file"
+}
+trap cleanup EXIT
+
+# Fetch the subscribe URL
+# Use 'v2rayNG' User-Agent to get base64 encoded protocol links
+if ! wget -q -O "$tmpfile" --timeout=30 --user-agent="v2rayNG" "$url" 2>/dev/null; then
+    json_init
+    json_add_string "error" "Failed to fetch URL"
+    json_dump
+    exit 1
+fi
+
+# Check if file is empty
+if [ ! -s "$tmpfile" ]; then
+    json_init
+    json_add_string "error" "Empty response from server"
+    json_dump
+    exit 1
+fi
+
+# Decode base64
+if ! base64 -d "$tmpfile" > "$decoded_file" 2>/dev/null; then
+    json_init
+    json_add_string "error" "Failed to decode base64"
+    json_dump
+    exit 1
+fi
+
+# URL decode function using printf
+url_decode() {
+    printf '%b' "$(echo "$1" | sed 's/%\([0-9A-Fa-f][0-9A-Fa-f]\)/\\x\1/g')" 2>/dev/null || echo "$1"
+}
+
+# Parse all supported protocols
+json_init
+json_add_array "configs"
+
+index=1
+while IFS= read -r line || [ -n "$line" ]; do
+    # Trim whitespace and carriage returns
+    line=$(echo "$line" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    # Skip empty lines
+    [ -z "$line" ] && continue
+
+    # Determine protocol
+    protocol=""
+    case "$line" in
+        vless://*)
+            protocol="vless"
+            ;;
+        ss://*)
+            protocol="ss"
+            ;;
+        trojan://*)
+            protocol="trojan"
+            ;;
+        hy2://*)
+            protocol="hy2"
+            ;;
+        hysteria2://*)
+            protocol="hy2"
+            ;;
+    esac
+
+    if [ -n "$protocol" ]; then
+        # Extract title from URL fragment (#title)
+        title=$(echo "$line" | sed -n 's/.*#\(.*\)$/\1/p')
+
+        # URL decode title
+        if [ -n "$title" ]; then
+            title=$(url_decode "$title")
+        fi
+
+        if [ -z "$title" ]; then
+            title="Config $index"
+        fi
+
+        json_add_object
+        json_add_string "url" "$line"
+        json_add_string "title" "$title"
+        json_add_string "protocol" "$protocol"
+        json_close_object
+
+        index=$((index + 1))
+    fi
+done < "$decoded_file"
+
+json_close_array
+json_dump
